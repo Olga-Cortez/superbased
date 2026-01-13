@@ -1,0 +1,51 @@
+# Project version 5.3.2 29.11.25.22.29+2 jan. 26
+# The name of the extension developer.
+author: Potiguaras
+
+# Define the minimum Android SDK API level your extension supports.
+min_sdk: 21
+# Define the compile Android SDK API level.
+compile_sdk: 35
+# If enabled, the D8 tool will generate desugared jar (classes.dex)
+desugar_dex: true
+# If enabled, extension will be optimized using R8.
+R8: true
+# If enabled, extension will be optimized using ProGuard.
+proguard: true
+#Define specific ProGuard version.
+proguard_version: 7.8.2
+# If enabled, Kotlin Standard Libraries will be included with the extension.
+kotlin: false
+# Kotlin Compiler version.
+kotlin_version: 2.3.0
+
+# Runtime dependencies [Local Only]
+dependencies:
+  - io.github.jan-tennert.supabase:postgrest-kt:+
+  - io.github.jan-tennert.supabase:auth-kt:+
+  - io.github.jan-tennert.supabase:realtime-kt:+
+  - io.github.jan-tennert.supabase:storage-kt:+
+  - io.github.jan-tennert.supabase:functions-kt:+
+  - io.ktor:ktor-client-android:+
+  - org.jetbrains.kotlinx:kotlinx-serialization-json:+
+  - org.jetbrains.kotlinx:kotlinx-coroutines:+
+  - org.jetbrains.kotlinx:kotlinx-coroutines-android:+
+  - org.jetbrains.kotlinx:kotlinx-datetime:+
+
+ 
+# Compile-time dependencies [Local Only]
+#compile_time:
+  
+
+# Extension assets. [Should be present in assets directory]
+# assets:
+# - my-awesome-asset.anything
+
+# Enable to write docs in Markdown during build. Pass `-b` to generate blocks.
+gen_docs: true
+# Enable to increment the version number of each component during build.
+auto_version: true
+# Enable to remove @annotations from the extension.
+deannonate: true
+# Enable to skip matching classes provided by AI2.
+filter_mit_classes: false

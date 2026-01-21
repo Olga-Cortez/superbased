@@ -2,7 +2,6 @@ package org.potiguaras.supabased.utils
 
 import com.google.appinventor.components.runtime.util.JsonUtil
 import com.google.appinventor.components.runtime.util.YailDictionary
-import com.typesafe.config.ConfigException
 import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.providers.Apple
 import io.github.jan.supabase.auth.providers.Azure
@@ -118,11 +117,9 @@ class AuthUtils {
 
     fun convertToJsonObject(dict: YailDictionary): JsonObject {
         return try {
-            // Tenta conversão automática primeiro
             val jsonString = JsonUtil.getJsonRepresentation(dict)
             Json.decodeFromString<JsonObject>(jsonString)
         } catch (e: Exception) {
-            // Fallback manual
             buildJsonObject {
                 dict.keys.forEach { key ->
                     val keyStr = key.toString()
@@ -132,7 +129,6 @@ class AuthUtils {
                         is Boolean -> put(keyStr, value)
                         is YailDictionary -> put(keyStr, convertToJsonObject(value))
                         is List<*> -> {
-                            // Se houver listas/aninhamento adicional
                             put(keyStr, buildJsonArray {
                                 value.filterNotNull().forEach { item ->
                                     when (item) {
@@ -142,7 +138,7 @@ class AuthUtils {
                                 }
                             })
                         }
-                        null -> {} // Ignora null ou poderia usar: put(keyStr, JsonNull)
+                        null -> {}
                         else -> put(keyStr, value.toString())
                     }
                 }

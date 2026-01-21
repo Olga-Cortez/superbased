@@ -16,7 +16,6 @@ object TypeConverter {
         return JsonObject(jsonMap)
     }
 
-    // Converte parâmetros RPC do App Inventor para JSON
     fun yailDictToRpcParams(parameters: YailDictionary): JsonObject {
         return yailDictionaryToJsonObject(parameters)  // Reusa mesma lógica
     }

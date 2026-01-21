@@ -9,37 +9,47 @@ import com.google.appinventor.components.runtime.ComponentContainer
 import com.google.appinventor.components.runtime.EventDispatcher
 import com.google.appinventor.components.runtime.OnDestroyListener
 import com.google.appinventor.components.runtime.util.YailDictionary
-import com.google.appinventor.components.runtime.util.YailDictionary.*
-import com.google.appinventor.components.runtime.util.JsonUtil.*
 import com.google.appinventor.components.runtime.util.YailList
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.exceptions.RestException
+import io.github.jan.supabase.auth.exception.AuthRestException
+import io.github.jan.supabase.auth.exception.TokenExpiredException
+import io.github.jan.supabase.auth.exception.SessionRequiredException
 import io.github.jan.supabase.auth.mfa.FactorType
 import io.github.jan.supabase.auth.user.*
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.providers.builtin.OTP
 import io.github.jan.supabase.auth.providers.builtin.Phone
+import kotlinx.coroutines.*
+import kotlinx.serialization.json.*
 import org.potiguaras.supabased.helpers.PhoneChannelOptions
 import org.potiguaras.supabased.utils.AuthUtils
 import org.potiguaras.supabased.helpers.ThirdPartyProvider
-import kotlinx.coroutines.launch
-import kotlinx.serialization.json.*
 import org.potiguaras.supabased.helpers.OTPType
-import kotlin.String
-import kotlin.text.ifEmpty
 
 @DesignerComponent(
     version = 59,
     versionName = "1.0",
     description = "Extension block for using Auth functions (implements auth-kt from supabase-kt kotlin library)",
-    iconName = "icon.png"
+    iconName = "icon.png",
+    nonVisible = true,
+    category = com.google.appinventor.components.common.ComponentCategory.EXTENSION
 )
-@Suppress("FunctionName")
-class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibleComponent(container.`$form`()), OnDestroyListener {
+@Suppress("FunctionName", "unused")  // Added "unused" here
+class SupabaseAuth(
+    private val container: ComponentContainer
+) : AndroidNonvisibleComponent(container.`$form`()),
+    OnDestroyListener {
 
     private val authUtils by lazy { AuthUtils() }
+    private val componentScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val activeJobs = mutableListOf<Job>()
 
+    @Volatile
     private var _currentUser: YailDictionary = YailDictionary()
+
+    @Volatile
     private var _currentSession: YailDictionary = YailDictionary()
 
     private var _sessionManager: SessionManager? = null
@@ -63,83 +73,121 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
 
     // ========================== EVENTS =============================
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when user sign-up is successful")
-    fun SignUpSuccess(
+    fun SignUpWithEmailSuccess(
         userInfo: YailDictionary,
         email: String,
         userId: String,
         token: String
     ) {
-        EventDispatcher.dispatchEvent(this, "SignUpSuccess",
+        EventDispatcher.dispatchEvent(this, "SignUpWithEmailSuccess",
             userInfo, email, userId, token)
     }
 
+    @Suppress("unused")  // Added this annotation
+    @SimpleEvent(description = "Triggered when user sign-up with phone is successful")
+    fun SignUpWithPhoneSuccess(
+        userInfo: YailDictionary,
+        phone: String,
+        userId: String,
+        token: String
+    ) {
+        EventDispatcher.dispatchEvent(this, "SignUpWithPhoneSuccess",
+            userInfo, phone, userId, token)
+    }
+
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when user sign-in is successful")
-    fun SignInSuccess(
+    fun SignInWithEmailSuccess(
         email: String,
         userId: String,
         token: String,
         userInfo: YailDictionary
     ) {
-        EventDispatcher.dispatchEvent(this, "SignInSuccess",
+        EventDispatcher.dispatchEvent(this, "SignInWithEmailSuccess",
             email, userId, token, userInfo)
     }
 
+    @Suppress("unused")  // Added this annotation
+    @SimpleEvent(description = "Triggered when user sign-in is successful")
+    fun SignInWithPhoneSuccess(
+        phone: String,
+        userId: String,
+        token: String,
+        userInfo: YailDictionary
+    ) {
+        EventDispatcher.dispatchEvent(this, "SignInWithPhoneSuccess",
+            phone, userId, token, userInfo)
+    }
+
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when user signs out")
     fun SignOutSuccess() {
         EventDispatcher.dispatchEvent(this, "SignOutSuccess")
     }
 
-    @SimpleEvent(description = "Triggered when authentication error occurs")
-    fun AuthError(error: String, errorCode: String = "") {
-        EventDispatcher.dispatchEvent(this, "AuthError", error, errorCode)
+    @Suppress("unused")  // Added this annotation
+    @SimpleEvent(description = "Triggered when any authentication error occurs")
+    fun AuthError(operation: String, errorMessage: String, errorCode: String = "", httpStatus: Int = -1) {
+        EventDispatcher.dispatchEvent(this, "AuthError", operation, errorMessage, errorCode, httpStatus)
     }
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when OTP is sent")
     fun OtpSent(channel: String, destination: String) {
         EventDispatcher.dispatchEvent(this, "OtpSent", channel, destination)
     }
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when password reset email is sent")
     fun ResetPasswordSent(email: String) {
         EventDispatcher.dispatchEvent(this, "ResetPasswordSent", email)
     }
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when user email is updated")
     fun EmailUpdated(oldEmail: String, newEmail: String) {
         EventDispatcher.dispatchEvent(this, "EmailUpdated", oldEmail, newEmail)
     }
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when user phone is updated")
     fun PhoneUpdated(oldPhone: String, newPhone: String) {
         EventDispatcher.dispatchEvent(this, "PhoneUpdated", oldPhone, newPhone)
     }
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when session is refreshed")
     fun SessionRefreshed(sessionInfo: YailDictionary) {
         EventDispatcher.dispatchEvent(this, "SessionRefreshed", sessionInfo)
     }
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when user data is updated")
     fun UserUpdated(userInfo: YailDictionary) {
         EventDispatcher.dispatchEvent(this, "UserUpdated", userInfo)
     }
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when MFA factor is enrolled")
     fun MfaTOTPFactorEnrolled(qrCode: String, qrCodeId: String, qrCodeType: String, factorId: String, factorType: String, friendlyName: String?, issuer: String?) {
         EventDispatcher.dispatchEvent(this, "MfaTOTPFactorEnrolled", qrCode, qrCodeId, qrCodeType, factorId, factorType, friendlyName, issuer)
     }
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when MFA factor is enrolled")
     fun MfaPhoneFactorEnrolled(phone: String, factorId: String, factorType: String, friendlyName: String?) {
         EventDispatcher.dispatchEvent(this, "MfaPhoneFactorEnrolled", phone, factorId, factorType, friendlyName)
     }
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when MFA factor is verified")
-    fun MfaFactorVerified() {
-        EventDispatcher.dispatchEvent(this, "MfaFactorVerified")
+    fun MfaFactorVerified(factorId: String, challengeId: String, sessionUpdated: Boolean) {
+        EventDispatcher.dispatchEvent(this, "MfaFactorVerified", factorId, challengeId, sessionUpdated)
     }
 
+    @Suppress("unused")  // Added this annotation
     @SimpleEvent(description = "Triggered when MFA factor is verified")
     fun MfaChallengeCreated(challengeId: String) {
         EventDispatcher.dispatchEvent(this, "MfaChallengeCreated", challengeId)
@@ -155,16 +203,30 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         redirectTo: String = "",
         captchaToken: String = ""
     ) {
-        executeAuthOperation { client ->
-            client.auth.signUpWith(provider=Email, redirectUrl=redirectTo.ifEmpty { null }) {
-                this.email = email
-                this.password = password
-                if (userMetadata.isNotEmpty()) {
-                    this.data = authUtils.convertToJsonObject(userMetadata)
+        executeAuthOperation("SignUpWithEmail") { client, onSuccess, onError ->
+            try {
+                val result = client.auth.signUpWith(
+                    provider = Email,
+                    redirectUrl = redirectTo.ifEmpty { null }
+                ) {
+                    this.email = email
+                    this.password = password
+                    if (userMetadata.isNotEmpty()) {
+                        this.data = authUtils.convertToJsonObject(userMetadata)
+                    }
+                    if (captchaToken.isNotEmpty()) {
+                        this.captchaToken = captchaToken
+                    }
                 }
-                if (captchaToken.isNotEmpty()) {
-                    this.captchaToken = captchaToken
+
+                val session = client.auth.currentSessionOrNull()
+                updateUserAndSession(client)
+
+                onSuccess {
+                    SignUpWithEmailSuccess(_currentUser, email, result?.id ?: "", session?.accessToken ?: "")
                 }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
@@ -178,21 +240,32 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         redirectTo: String = "",
         captchaToken: String = ""
     ) {
-        executeAuthOperation { client ->
-            client.auth.signUpWith(provider=Phone, redirectUrl=redirectTo.ifEmpty { null }) {
-                this.phone = phone
-                this.password = password
+        executeAuthOperation("SignUpWithPhone") { client, onSuccess, onError ->
+            try {
+                val result = client.auth.signUpWith(provider = Phone, redirectUrl = redirectTo.ifEmpty { null }) {
+                    this.phone = phone
+                    this.password = password
 
-                this.channel = when (channel) {
-                    PhoneChannelOptions.Whatsapp -> Phone.Channel.WHATSAPP
-                    else -> Phone.Channel.SMS
+                    this.channel = when (channel) {
+                        PhoneChannelOptions.Whatsapp -> Phone.Channel.WHATSAPP
+                        else -> Phone.Channel.SMS
+                    }
+                    if (userMetadata.isNotEmpty()) {
+                        data = authUtils.convertToJsonObject(userMetadata)
+                    }
+                    if (captchaToken.isNotEmpty()) {
+                        this.captchaToken = captchaToken
+                    }
                 }
-                if (userMetadata.isNotEmpty()) {
-                    data = authUtils.convertToJsonObject(userMetadata)
+
+                val session = client.auth.currentSessionOrNull()
+                updateUserAndSession(client)
+
+                onSuccess {
+                    SignUpWithPhoneSuccess(_currentUser, result?.phone ?: "", result?.id ?: "", session?.accessToken ?: "")
                 }
-                if (captchaToken.isNotEmpty()) {
-                    this.captchaToken = captchaToken
-                }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
@@ -201,33 +274,69 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
 
     @SimpleFunction(description = "Sign in with email and password")
     fun SignInWithEmail(email: String, password: String, redirectTo: String = "") {
-        executeAuthOperation { client ->
-            client.auth.signInWith(provider=Email, redirectUrl=redirectTo.ifEmpty { null }) {
-                this.email = email
-                this.password = password
+        executeAuthOperation("SignInWithEmail") { client, onSuccess, onError ->
+            try {
+                client.auth.signInWith(
+                    provider = Email,
+                    redirectUrl = redirectTo.ifEmpty { null }
+                ) {
+                    this.email = email
+                    this.password = password
+                }
+
+                updateUserAndSession(client)
+
+                onSuccess {
+                    SignInWithEmailSuccess(email, _currentUser["id"] as String, _currentSession["token"] as String, _currentUser)
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
-            updateUserAndSession(client)
         }
     }
 
     @SimpleFunction(description = "Sign in with phone and password")
     fun SignInWithPhone(phone: String, password: String, redirectTo: String = "") {
-        executeAuthOperation { client ->
-            client.auth.signInWith(provider = Phone, redirectUrl=redirectTo.ifEmpty { null }) {
-                this.phone = phone
-                this.password = password
+        executeAuthOperation("SignInWithPhone") { client, onSuccess, onError ->
+            try {
+                client.auth.signInWith(
+                    provider = Phone,
+                    redirectUrl = redirectTo.ifEmpty { null }
+                ) {
+                    this.phone = phone
+                    this.password = password
+                }
+
+                updateUserAndSession(client)
+
+                onSuccess {
+                    SignInWithPhoneSuccess(
+                        _currentUser["phone"] as String,
+                        _currentUser["id"] as String,
+                        _currentSession["token"] as String,
+                        _currentUser
+                    )
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
-            updateUserAndSession(client)
         }
     }
 
     @SimpleFunction(description = "Sign in with OTP via email")
     fun SignInWithEmailOtp(email: String, redirectTo: String = "") {
-        executeAuthOperation { client ->
-            client.auth.signInWith(provider=OTP, redirectUrl=redirectTo.ifEmpty { null }) {
-                this.email = email
+        executeAuthOperation("SignInWithEmailOtp") { client, onSuccess, onError ->
+            try {
+                client.auth.signInWith(provider = OTP, redirectUrl = redirectTo.ifEmpty { null }) {
+                    this.email = email
+                }
+
+                onSuccess {
+                    OtpSent("email", email)
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
-            OtpSent("email", email)
         }
     }
 
@@ -237,12 +346,19 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         redirectTo: String = "",
         shouldCreateUser: Boolean = true
     ) {
-        executeAuthOperation { client ->
-            client.auth.signInWith(provider=OTP, redirectUrl=redirectTo.ifEmpty { null }) {
-                this.phone = phone
-                createUser = shouldCreateUser
+        executeAuthOperation("SignInWithPhoneOtp") { client, onSuccess, onError ->
+            try {
+                client.auth.signInWith(provider = OTP, redirectUrl = redirectTo.ifEmpty { null }) {
+                    this.phone = phone
+                    createUser = shouldCreateUser
+                }
+
+                onSuccess {
+                    OtpSent("phone", phone)
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
-            OtpSent("phone", phone)
         }
     }
 
@@ -250,44 +366,76 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
     fun SignInWithOAuth(
         provider: ThirdPartyProvider,
         redirectTo: String = "",
-        scopesList: YailList? = null,
+        scopesList: YailList = YailList.makeEmptyList(),
     ) {
-        executeAuthOperation { client ->
-            val oauthProvider = authUtils.getOAuthProvider(provider)
-            client.auth.signInWith(provider = oauthProvider, redirectUrl = redirectTo.ifEmpty { null }) {
-                if (!scopesList.isNullOrEmpty()) {
-                    val scopesArray = scopesList.toStringArray()
-                    scopesArray.forEach { scope ->
-                        scopes.add(scope)
+        executeAuthOperation("SignInWithOAuth") { client, onSuccess, onError ->
+            try {
+                val oauthProvider = authUtils.getOAuthProvider(provider)
+                client.auth.signInWith(provider = oauthProvider, redirectUrl = redirectTo.ifEmpty { null }) {
+                    if (scopesList.isNotEmpty()) {
+                        val scopesArray = scopesList.toStringArray()
+                        scopesArray.forEach { scope ->
+                            scopes.add(scope)
+                        }
                     }
                 }
+
+                onSuccess {
+                    // OAuth flow will redirect, no immediate success event
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
 
-    @SimpleFunction(description = "Verify OTP code")
-    fun VerifyOtp(
-        email: String? = null,
-        phone: String? = null,
+    @SimpleFunction(description = "Verify OTP code sent to email")
+    fun VerifyEmailOtp(
+        email: String,
         token: String,
         type: OTPType
     ) {
-        executeAuthOperation { client ->
-            if (email != null) {
+        executeAuthOperation("VerifyEmailOtp") { client, onSuccess, onError ->
+            try {
                 client.auth.verifyEmailOtp(
                     type = authUtils.getEmailOtpType(type),
                     email = email,
                     token = token
                 )
-            } else if (phone != null) {
+
+                updateUserAndSession(client)
+
+                onSuccess {
+                    // Event will be triggered by updateUserAndSession
+                }
+            } catch (e: Exception) {
+                onError(e)
+            }
+        }
+    }
+
+    @SimpleFunction(description = "Verify OTP code sent to phone")
+    fun VerifyPhoneOtp(
+        phone: String,
+        token: String,
+        type: OTPType
+    ) {
+        executeAuthOperation("VerifyPhoneOtp") { client, onSuccess, onError ->
+            try {
                 client.auth.verifyPhoneOtp(
                     type = authUtils.getPhoneOtpType(type),
                     phone = phone,
                     token = token
                 )
-            }
 
-            updateUserAndSession(client)
+                updateUserAndSession(client)
+
+                onSuccess {
+                    // Event will be triggered by updateUserAndSession
+                }
+            } catch (e: Exception) {
+                onError(e)
+            }
         }
     }
 
@@ -299,23 +447,39 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         redirectTo: String = "",
         captchaToken: String = ""
     ) {
-        executeAuthOperation { client ->
-            client.auth.resetPasswordForEmail(
-                email = email,
-                redirectUrl = redirectTo.ifEmpty { null },
-                captchaToken = captchaToken.ifEmpty { null }
-            )
-            ResetPasswordSent(email)
+        executeAuthOperation("ResetPasswordForEmail") { client, onSuccess, onError ->
+            try {
+                client.auth.resetPasswordForEmail(
+                    email = email,
+                    redirectUrl = redirectTo.ifEmpty { null },
+                    captchaToken = captchaToken.ifEmpty { null }
+                )
+
+                onSuccess {
+                    ResetPasswordSent(email)
+                }
+            } catch (e: Exception) {
+                onError(e)
+            }
         }
     }
 
     @SimpleFunction(description = "Update user password")
     fun UpdatePassword(newPassword: String) {
-        executeAuthOperation { client ->
-            client.auth.updateUser {
-                password = newPassword
+        executeAuthOperation("UpdatePassword") { client, onSuccess, onError ->
+            try {
+                client.auth.updateUser {
+                    password = newPassword
+                }
+
+                updateUserAndSession(client)
+
+                onSuccess {
+                    UserUpdated(_currentUser)
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
-            updateUserAndSession(client)
         }
     }
 
@@ -324,7 +488,7 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
     @SimpleFunction(description = "Get current user info")
     fun GetUser(): YailDictionary {
         return try {
-            val client = getClient() ?: return YailDictionary()
+            val client = SupabaseCore.getClient() ?: return YailDictionary()
             client.auth.currentUserOrNull()?.let { user ->
                 authUtils.userToYailDictionary(user)
             } ?: YailDictionary()
@@ -333,88 +497,111 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         }
     }
 
-    @SimpleFunction(description = "Update user information")
+    @SimpleFunction(description = "Modifies the logged user's information")
     fun UpdateUser(
-        email: String? = null,
-        phone: String? = null,
-        password: String? = null,
+        email: String = "",
+        phone: String = "",
+        password: String = "",
         userMetadata: YailDictionary = YailDictionary()
     ) {
-        executeAuthOperation { client ->
-            val oldEmail = client.auth.currentUserOrNull()?.email
-            val oldPhone = client.auth.currentUserOrNull()?.phone
-
-            client.auth.updateUser {
-                email?.let { this.email = it }
-                phone?.let { this.phone = it }
-                password?.let { this.password = it }
-
-                if (userMetadata.isNotEmpty()) {
-                    data = authUtils.convertToJsonObject(userMetadata)
+        executeAuthOperation("UpdateUser") { client, onSuccess, onError ->
+            try {
+                if (email.isEmpty() && phone.isEmpty() && password.isEmpty() && userMetadata.isEmpty) {
+                    throw IllegalArgumentException("At least one field must be provided for update")
                 }
-            }
 
-            updateUserAndSession(client)
+                val currentUser = client.auth.currentUserOrNull()
+                    ?: throw SessionRequiredException("No user is currently logged in")
 
-            email?.let { newEmail ->
-                oldEmail?.let { old ->
-                    if (old != newEmail) {
-                        mainHandler.launch {
-                            EmailUpdated(old, newEmail)
-                        }
+                val oldEmail = currentUser.email
+                val oldPhone = currentUser.phone
+
+                client.auth.updateUser {
+                    if (email.isNotEmpty()) {
+                        this.email = email
+                    }
+                    if (phone.isNotEmpty()) {
+                        this.phone = phone
+                    }
+                    if (password.isNotEmpty()) {
+                        this.password = password
+                    }
+                    if (userMetadata.isNotEmpty()) {
+                        data = authUtils.convertToJsonObject(userMetadata)
                     }
                 }
-            }
 
-            phone?.let { newPhone ->
-                oldPhone?.let { old ->
-                    if (old != newPhone) {
-                        mainHandler.launch {
-                            PhoneUpdated(old, newPhone)
-                        }
+                updateUserAndSession(client)
+
+                onSuccess {
+                    UserUpdated(_currentUser)
+
+                    if (email.isNotEmpty() && oldEmail != email) {
+                        EmailUpdated(oldEmail ?: "", email)
+                    }
+
+                    if (phone.isNotEmpty() && oldPhone != phone) {
+                        PhoneUpdated(oldPhone ?: "", phone)
                     }
                 }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
 
     @SimpleFunction(description = "Soft delete current user")
     fun SoftDeleteCurrentUser() {
-        executeAuthOperation { client ->
-            val currentUser = client.auth.currentUserOrNull()
-            if (currentUser != null) {
-                client.auth.admin.updateUserById(uid = currentUser.id) {
-                    userMetadata = buildJsonObject {
-                        put("deleted", true)
-                        put("deleted_at", System.currentTimeMillis().toString())
+        executeAuthOperation("SoftDeleteCurrentUser") { client, onSuccess, onError ->
+            try {
+                val currentUser = client.auth.currentUserOrNull()
+                if (currentUser != null) {
+                    client.auth.admin.updateUserById(uid = currentUser.id) {
+                        userMetadata = buildJsonObject {
+                            put("deleted", true)
+                            put("deleted_at", System.currentTimeMillis().toString())
+                        }
                     }
+                } else {
+                    throw Exception("No user logged in")
                 }
-            } else {
-                throw Exception("No user logged in")
-            }
-            clearUserSession()
-            mainHandler.launch {
-                SignOutSuccess()
+
+                clearUserSession()
+
+                onSuccess {
+                    SignOutSuccess()
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
 
     @SimpleFunction(description = "Soft delete user by ID (admin only)")
     fun SoftDeleteUser(userId: String) {
-        executeAuthOperation { client ->
-            client.auth.admin.updateUserById(uid = userId) {
-                userMetadata = buildJsonObject {
-                    put("deleted", true)
-                    put("deleted_at", System.currentTimeMillis().toString())
+        executeAuthOperation("SoftDeleteUser") { client, onSuccess, onError ->
+            try {
+                client.auth.admin.updateUserById(uid = userId) {
+                    userMetadata = buildJsonObject {
+                        put("deleted", true)
+                        put("deleted_at", System.currentTimeMillis().toString())
+                    }
                 }
-            }
 
-            val currentUserId = client.auth.currentUserOrNull()?.id
-            if (currentUserId == userId) {
-                clearUserSession()
-                mainHandler.launch {
-                    SignOutSuccess()
+                val currentUserId = client.auth.currentUserOrNull()?.id
+                if (currentUserId == userId) {
+                    clearUserSession()
+
+                    onSuccess {
+                        SignOutSuccess()
+                    }
+                } else {
+                    onSuccess {
+                        // User deleted but not the current user
+                    }
                 }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
@@ -423,22 +610,32 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
 
     @SimpleFunction(description = "Sign out current user")
     fun SignOut() {
-        executeAuthOperation { client ->
-            client.auth.signOut()
-            clearUserSession()
-            mainHandler.launch {
-                SignOutSuccess()
+        executeAuthOperation("SignOut") { client, onSuccess, onError ->
+            try {
+                client.auth.signOut()
+                clearUserSession()
+
+                onSuccess {
+                    SignOutSuccess()
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
 
     @SimpleFunction(description = "Refresh current session")
     fun RefreshSession() {
-        executeAuthOperation { client ->
-            client.auth.refreshCurrentSession()
-            _currentSession = authUtils.sessionToYailDictionary(client.auth.currentSessionOrNull())
-            mainHandler.launch {
-                SessionRefreshed(_currentSession)
+        executeAuthOperation("RefreshSession") { client, onSuccess, onError ->
+            try {
+                client.auth.refreshCurrentSession()
+                _currentSession = authUtils.sessionToYailDictionary(client.auth.currentSessionOrNull())
+
+                onSuccess {
+                    SessionRefreshed(_currentSession)
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
@@ -450,19 +647,33 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         friendlyName: String = "",
         issuerUrl: String = "",
     ) {
-        executeAuthOperation { client ->
-           val issuerURL=issuerUrl.ifEmpty { null }
-           val frndName = friendlyName.ifEmpty { null }
-           val factor = client.auth.mfa.enroll(
-               factorType = FactorType.TOTP,
-               friendlyName = frndName
-           ) {
-               issuer=issuerURL
-           }
+        executeAuthOperation("MfaEnrollTOTPFactor") { client, onSuccess, onError ->
+            try {
+                val issuerURL = issuerUrl.ifEmpty { null }
+                val frndName = friendlyName.ifEmpty { null }
+                val factor = client.auth.mfa.enroll(
+                    factorType = FactorType.TOTP,
+                    friendlyName = frndName
+                ) {
+                    issuer = issuerURL
+                }
+
                 val (id, type, uri) = factor.data
                 val (factorId, factorType, _) = factor
-            mainHandler.launch {
-                MfaTOTPFactorEnrolled(qrCode=uri, qrCodeId =id, qrCodeType = type, factorId = factorId, factorType = factorType, friendlyName=frndName, issuer=issuerURL)
+
+                onSuccess {
+                    MfaTOTPFactorEnrolled(
+                        qrCode = uri,
+                        qrCodeId = id,
+                        qrCodeType = type,
+                        factorId = factorId,
+                        factorType = factorType,
+                        friendlyName = frndName,
+                        issuer = issuerURL
+                    )
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
@@ -472,19 +683,23 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         phone: String = "",
         friendlyName: String = ""
     ) {
-        executeAuthOperation { client ->
-            val factor = client.auth.mfa.enroll(
-                factorType = FactorType.Phone,
-                friendlyName = friendlyName.ifEmpty { null }
-            ) {
-                this.phone = phone
-            }
+        executeAuthOperation("MfaEnrollPhoneFactor") { client, onSuccess, onError ->
+            try {
+                val factor = client.auth.mfa.enroll(
+                    factorType = FactorType.Phone,
+                    friendlyName = friendlyName.ifEmpty { null }
+                ) {
+                    this.phone = phone
+                }
 
-            val (phone) = factor.data
-            val (factorId, factorType, _) = factor
+                val (phone) = factor.data
+                val (factorId, factorType, _) = factor
 
-            mainHandler.launch {
-                MfaPhoneFactorEnrolled(phone, factorId, factorType, friendlyName)
+                onSuccess {
+                    MfaPhoneFactorEnrolled(phone, factorId, factorType, friendlyName)
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
@@ -494,12 +709,20 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         factorId: String,
         channel: PhoneChannelOptions
     ) {
-        executeAuthOperation { client ->
-            val challenge = client.auth.mfa.createChallenge(factorId = factorId, channel=authUtils.getPhoneChannelType(channel))
+        executeAuthOperation("MfaCreateChallenge") { client, onSuccess, onError ->
+            try {
+                val challenge = client.auth.mfa.createChallenge(
+                    factorId = factorId,
+                    channel = authUtils.getPhoneChannelType(channel)
+                )
 
-            val challengeId = challenge.id
-            mainHandler.launch {
-                MfaChallengeCreated(challengeId = challengeId)
+                val challengeId = challenge.id
+
+                onSuccess {
+                    MfaChallengeCreated(challengeId = challengeId)
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
@@ -511,16 +734,34 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         challengeId: String,
         shouldSaveSession: Boolean = true
     ) {
-        executeAuthOperation { client ->
-            val verifyResponse = client.auth.mfa.verifyChallenge(
-                factorId = factorId,
-                code = code,
-                challengeId = challengeId,
-                saveSession = shouldSaveSession
-            )
+        executeAuthOperation("VerifyMFAFactorChallenge") { client, onSuccess, onError ->
+            try {
+                val verifyResponse = client.auth.mfa.verifyChallenge(
+                    factorId = factorId,
+                    code = code,
+                    challengeId = challengeId,
+                    saveSession = shouldSaveSession
+                )
 
-            mainHandler.launch {
-                MfaFactorVerified()
+                // If saveSession is true, update the session
+                if (shouldSaveSession) {
+                    _currentSession = authUtils.sessionToYailDictionary(verifyResponse)
+                    verifyResponse.user?.let { user ->
+                        _currentUser = authUtils.userToYailDictionary(user)
+                    }
+                }
+
+                onSuccess {
+                    // Pass more information to the event
+                    MfaFactorVerified(factorId, challengeId, shouldSaveSession)
+
+                    // If session was saved, also trigger session refresh event
+                    if (shouldSaveSession) {
+                        SessionRefreshed(_currentSession)
+                    }
+                }
+            } catch (e: Exception) {
+                onError(e)
             }
         }
     }
@@ -528,26 +769,87 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
     @SimpleFunction(description = "Get available MFA factors")
     fun GetMfaFactors(): List<YailDictionary> {
         return try {
-            val client = getClient() ?: throw Exception("Supabase client not initialized")
-            val user = client.auth.currentUserOrNull() ?: return emptyList()
+            val client = SupabaseCore.getClient() ?: return mutableListOf()
+            val currentUser = client.auth.currentUserOrNull() ?: return mutableListOf()
 
-            user.factors.map { factor ->
+            val factorsList = mutableListOf<YailDictionary>()
+            currentUser.factors.forEach { factor ->
                 YailDictionary().apply {
                     put("id", factor.id)
                     put("type", factor.factorType)
                     put("friendly_name", factor.friendlyName)
+                }.also { dict ->
+                    factorsList.add(dict)
                 }
             }
+            factorsList
         } catch (e: Exception) {
-            emptyList()
+            mutableListOf()
         }
     }
 
-    private val scope = SupabaseCore.scope
-    private val mainHandler = SupabaseCore.mainHandler
+    // ==================== PRIVATE METHODS ====================
 
-    private fun getClient(): SupabaseClient? {
-        return SupabaseCore.getClient()
+    private fun executeAuthOperation(
+        operationName: String,
+        operation: suspend (
+            SupabaseClient,
+            onSuccess: (() -> Unit) -> Unit,
+            onError: (Exception) -> Unit
+        ) -> Unit
+    ) {
+        if (!SupabaseCore.isInitialized()) {
+            form.runOnUiThread {
+                AuthError(operationName, "Supabase client not initialized", "NOT_INITIALIZED", -1)
+            }
+            return
+        }
+
+        val job = componentScope.launch {
+            try {
+                val client = SupabaseCore.getClient() ?: throw IllegalStateException("Client not initialized")
+
+                operation(client,
+                    { successCallback ->
+                        form.runOnUiThread {
+                            successCallback()
+                        }
+                    },
+                    { error ->
+                        handleError(operationName, error)
+                    }
+                )
+            } catch (e: CancellationException) {
+                // Operation was cancelled, do nothing
+            } catch (e: Exception) {
+                handleError(operationName, e)
+            }
+        }
+
+        trackJob(job)
+    }
+
+    private fun handleError(operationName: String, error: Exception) {
+        form.runOnUiThread {
+            when (error) {
+                is AuthRestException -> {
+                    val code = error.errorCode?.value ?: error.error
+                    AuthError(operationName, error.errorDescription, code, error.statusCode)
+                }
+                is RestException -> {
+                    AuthError(operationName, error.description ?: error.error, error.error, error.statusCode)
+                }
+                is TokenExpiredException -> {
+                    AuthError(operationName, error.message ?: "Token expired", "token_expired", 401)
+                }
+                is SessionRequiredException -> {
+                    AuthError(operationName, error.message ?: "Session required", "session_required", 401)
+                }
+                else -> {
+                    AuthError(operationName, error.message ?: "Unknown error", error.javaClass.simpleName, -1)
+                }
+            }
+        }
     }
 
     private fun initializeSessionManager() {
@@ -561,16 +863,13 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         }
     }
 
-    private fun executeAuthOperation(operation: suspend (SupabaseClient) -> Unit) {
-        scope.launch {
-            try {
-                val client = getClient() ?: throw Exception("Supabase client not initialized")
-                operation(client)
-            } catch (e: Exception) {
-                mainHandler.launch {
-                    AuthError(e.message ?: "Unknown error", e.javaClass.simpleName)
-                }
-            }
+    private class SessionManager {
+        var onSessionUpdate: ((UserSession) -> Unit)? = null
+        var onUserUpdate: ((UserInfo) -> Unit)? = null
+
+        fun clearSession() {
+            onSessionUpdate = null
+            onUserUpdate = null
         }
     }
 
@@ -580,19 +879,20 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
 
         user?.let {
             _currentUser = authUtils.userToYailDictionary(it)
+            form.runOnUiThread {
+                UserUpdated(_currentUser)
+            }
+        } ?: run {
+            _currentUser = YailDictionary()
         }
 
         session?.let {
             _currentSession = authUtils.sessionToYailDictionary(it)
-
-            mainHandler.launch {
-                SignInSuccess(
-                    user?.email ?: "",
-                    user?.id ?: "",
-                    it.accessToken,
-                    _currentUser
-                )
+            form.runOnUiThread {
+                SessionRefreshed(_currentSession)
             }
+        } ?: run {
+            _currentSession = YailDictionary()
         }
     }
 
@@ -602,20 +902,22 @@ class SupabaseAuth(private val container: ComponentContainer) : AndroidNonvisibl
         _sessionManager?.clearSession()
     }
 
-    override fun onDestroy() {
-        _sessionManager?.clearSession()
-        _sessionManager = null
+    private fun trackJob(job: Job) {
+        activeJobs.add(job)
+        job.invokeOnCompletion {
+            activeJobs.remove(job)
+        }
     }
 
-    // ==================== INNER CLASSES ====================
+    private fun cancelAllJobs() {
+        activeJobs.forEach { it.cancel() }
+        activeJobs.clear()
+    }
 
-    private class SessionManager {
-        var onSessionUpdate: ((UserSession) -> Unit)? = null
-        var onUserUpdate: ((UserInfo) -> Unit)? = null
-
-        fun clearSession() {
-            onSessionUpdate = null
-            onUserUpdate = null
-        }
+    override fun onDestroy() {
+        cancelAllJobs()
+        componentScope.cancel()
+        _sessionManager?.clearSession()
+        _sessionManager = null
     }
 }

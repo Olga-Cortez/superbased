@@ -94,7 +94,7 @@ class SupabaseRealtime(private val container: ComponentContainer) : AndroidNonvi
     /**
      * Subscribe to database changes on the current channel and table.
      * Uses the channel and table set via CurrentChannel and CurrentTable properties.
-     * @param eventType The type of event to subscribe to (INSERT, UPDATE, DELETE, or * for all)
+     * @param eventType The type of event to subscribe to (Note: Currently all events are delivered. Client-side filtering may be needed.)
      */
     @SimpleFunction(description = "Subscribe to database changes on the current channel and table")
     fun SubscribeToChanges(eventType: String) {
@@ -104,9 +104,11 @@ class SupabaseRealtime(private val container: ComponentContainer) : AndroidNonvi
     /**
      * Subscribe to database changes on a specific channel and table.
      * This is the core subscription method that handles the realtime connection.
+     * Note: The Supabase realtime API delivers all change types (INSERT, UPDATE, DELETE).
+     * The eventType parameter is maintained for API compatibility but currently all events are delivered.
      * @param channelName The name of the channel to subscribe to
      * @param tableName The name of the database table to monitor
-     * @param eventType The type of event to subscribe to (INSERT, UPDATE, DELETE, or * for all)
+     * @param eventType The type of event to subscribe to (reserved for future filtering)
      */
     @SimpleFunction(description = "Subscribe to database changes on a specific channel and table")
     fun SubscribeToTableChanges(channelName: String, tableName: String, eventType: String) {
